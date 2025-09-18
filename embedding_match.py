@@ -1,12 +1,13 @@
-# embedding_match.py
-from typing import List
+def embed_and_match(clauses, example_db=None):
+    """
+    임베딩 기반 매칭 (샘플 구현)
+    """
+    if not example_db:
+        return [{"clause": c, "similar_to": None} for c in clauses]
 
-def find_similar_examples(clause: str) -> List[dict]:
-    """
-    예시 문장 임베딩 기반 유사도 검색 (FAISS/pgvector 연동)
-    """
-    # TODO: 벡터화 & 검색 로직 연결
-    return [
-        {"example": "보증금 전액 몰취 조항", "similarity": 0.89, "label": "bad"},
-        {"example": "임대인과 임차인은 협의하여 조정한다", "similarity": 0.75, "label": "good"},
-    ]
+    results = []
+    for c in clauses:
+        # TODO: 실제 벡터 임베딩 + 코사인 유사도 검색 구현
+        matched = example_db[0] if example_db else None
+        results.append({"clause": c, "similar_to": matched})
+    return results

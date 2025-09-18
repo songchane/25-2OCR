@@ -1,24 +1,25 @@
-# main.py
-from ocr_module import extract_text_from_image
-from pipeline import analyze_contract
-import json
+from pipeline import process_documents
 
 if __name__ == "__main__":
+    secret_key = 'WXJaUVdTdU9QREVHZnZrTnpQRWt0TlFGVHZvS3dPQkk='
+    api_url = 'https://sue3ozo9cm.apigw.ntruss.com/custom/v1/46163/76ed309608501247a724d594f79abff5f798666c3c204556ddd144ad99a6a553/general'
+
     image_files = [
-        "D:/25-2ocr2/page/page_1.png", 
+        "D:/25-2ocr2/page/page_1.png",
         "D:/25-2ocr2/page/page_2.png",
         "D:/25-2ocr2/page/page_3.png",
         "D:/25-2ocr2/page/page_4.png"
     ]
 
-    # 여러 페이지 OCR 결과를 합치기
-    all_text = ""
-    for image_path in image_files:
-        text = extract_text_from_image(image_path)
-        all_text += text + "\n"
+    risk_keywords = ["위약금", "손해배상", "강제", "의무"]
+    example_db = ["예시 조항1", "예시 조항2"]
 
-    # 계약서 분석
-    analysis = analyze_contract(all_text)
+    results = process_documents(image_files, api_url, secret_key, risk_keywords, example_db)
 
-    # 결과 출력
-    print(json.dumps(analysis, ensure_ascii=False, indent=2))
+    print("=== 최종 분석 결과 ===")
+    for r in results["clauses"]:
+        print(r)
+
+    print("\n=== 유사 임베딩 매칭 결과 ===")
+    for m in results["embedding_match"]:
+        print(m)

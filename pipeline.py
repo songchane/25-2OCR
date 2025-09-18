@@ -1,29 +1,24 @@
-# pipeline.py
-from ocr_module import extract_text_from_image
-from segmentation import segment_contract
-from normalize import normalize_clause
-from rules import apply_rules
-from embedding_match import find_similar_examples
-from llm_judge import judge_with_llm
+from ocr_module import run_ocr
+from segmentation import extract_texts
+from analyzer import extract_special_clauses, tag_entities, match_risk_keywords
+from embedding_match import embed_and_match
 
-def analyze_contract(text: str) -> dict:
-    """
-    전체 계약서 분석 파이프라인
-    """
-    results = []
-    clauses = segment_contract(text)
+def process_documents(image_files, api_url, secret_key, risk_keywords=None, example_db=None):
+    all_texts = []
 
-    for clause in clauses:
-        norm = normalize_clause(clause)
-        rule_res = apply_rules(clause)
-        embed_res = find_similar_examples(clause)
-        llm_res = judge_with_llm(clause, rule_res, embed_res)
+    for image_file in image_files:
+        ocr_results = run_ocr(image_file, api_url, secret_key)
+        texts = extract_texts(ocr_results)
+        all_texts.extend(texts)
 
-        results.append({
-            "original": clause,
-            "normalized": norm,
-            "rules": rule_res,
-            "embedding": embed_res,
-            "llm": llm_res
-        })
-    return {"clauses": results}
+    full_text = "\n".join(all_texts)
+    clauses = extract_special_clauses(full_text)
+
+    enriched_clauses = []
+    for c in clauses:
+        entities = tag_entities(c)
+        risk = match_risk_keywords(c, risk_keywords or [])
+        enriched_clauses.append({"clause": c, "entities": entities, "risk": risk})
+
+    matched = embed_and_match(clauses, example_db=example_db)
+    return {"clauses": enriched_clauses, "embedding_match": matched}
