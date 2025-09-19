@@ -1,0 +1,18 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Environment files
+.env
+
+# VSCode settings (개인별 설정은 공유 불필요)
+.vscode/
+
+# OS-specific
+.DS_Store
+Thumbs.db
