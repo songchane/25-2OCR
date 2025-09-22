@@ -58,4 +58,3 @@ def embed_and_match(clauses, example_db=None, top_k=1):
         })
 
     return results
-
