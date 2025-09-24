@@ -1,60 +1,51 @@
-# def embed_and_match(clauses, example_db=None):
-#     """
-#     임베딩 기반 매칭 (샘플 구현)
-#     """
-#     if not example_db:
-#         return [{"clause": c, "similar_to": None} for c in clauses]
-
-#     results = []
-#     for c in clauses:
-#         # TODO: 실제 벡터 임베딩 + 코사인 유사도 검색 구현
-#         matched = example_db[0] if example_db else None
-#         results.append({"clause": c, "similar_to": matched})
-#     return results
-
 from sentence_transformers import SentenceTransformer, util
 
-from sentence_transformers import SentenceTransformer, util
-
-# 사전 학습된 임베딩 모델 로드 (최초 실행 시 다운로드 후 캐시에 저장됨)
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-def embed_and_match(clauses, example_db=None, top_k=1):
+def embed_and_match(clauses, good_examples=None, bad_examples=None):
     """
-    조항(clauses)과 예시 DB(example_db)를 임베딩 후 유사도 매칭
-    - clauses: 분석 대상 문장 리스트
-    - example_db: 비교할 예시 문장 리스트
-    - top_k: 가장 유사한 문장 몇 개까지 반환할지 (기본 1개)
-
-    return: [{clause, matches:[{text, similarity}, ...]}]
+    clauses: 분석 대상 문장 리스트
+    good_examples: 안전한 문장 리스트
+    bad_examples: 위험한 문장 리스트
     """
-    if not example_db:
-        return [{"clause": c, "matches": []} for c in clauses]
-
-    # 예시 DB 임베딩
-    db_embeddings = model.encode(example_db, convert_to_tensor=True)
-
     results = []
+
+    # 미리 임베딩
+    good_emb = model.encode(good_examples, convert_to_tensor=True) if good_examples else None
+    bad_emb = model.encode(bad_examples, convert_to_tensor=True) if bad_examples else None
+
     for c in clauses:
-        # 조항 임베딩
-        clause_embedding = model.encode(c, convert_to_tensor=True)
+        clause_emb = model.encode(c, convert_to_tensor=True)
 
-        # 코사인 유사도 계산
-        cos_scores = util.cos_sim(clause_embedding, db_embeddings)[0]
+        # 좋은 예시와의 유사도
+        good_sim = 0.0
+        if good_emb is not None:
+            sims = util.cos_sim(clause_emb, good_emb)[0]
+            good_sim = float(sims.max())
 
-        # top_k 유사 문장 뽑기
-        top_results = cos_scores.topk(k=min(top_k, len(example_db)))
+        # 나쁜 예시와의 유사도
+        bad_sim = 0.0
+        if bad_emb is not None:
+            sims = util.cos_sim(clause_emb, bad_emb)[0]
+            bad_sim = float(sims.max())
 
-        matches = []
-        for score, idx in zip(top_results[0], top_results[1]):
-            matches.append({
-                "text": example_db[int(idx)],
-                "similarity": round(float(score), 3)
-            })
+        # FinalScore = 좋은 예시와 가까울수록 ↑, 나쁜 예시와 가까울수록 ↓
+        final_score = good_sim - bad_sim
+
+        # 등급 판정
+        if final_score < -0.2:
+            grade = "위험"
+        elif final_score < 0.2:
+            grade = "경고"
+        else:
+            grade = "안전"
 
         results.append({
             "clause": c,
-            "matches": matches
+            "good_sim": round(good_sim, 3),
+            "bad_sim": round(bad_sim, 3),
+            "final_score": round(final_score, 3),
+            "grade_text": grade
         })
 
     return results

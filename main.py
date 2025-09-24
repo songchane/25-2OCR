@@ -1,21 +1,22 @@
 import os
 import sys
 import tempfile
-import json
 from pathlib import Path
 from datetime import datetime
+import pandas as pd
 
 from dotenv import load_dotenv
 from pipeline import process_documents
 
 from openpyxl import Workbook
+from openpyxl.styles import PatternFill, Font
 
 # PDF 출력용
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib import colors
 
 
@@ -72,40 +73,51 @@ def collect_inputs(user_path: str) -> list[str]:
     return final_images
 
 
-def save_as_json(results: dict, out_dir: Path, timestamp: str):
-    json_path = out_dir / f"analysis_result_{timestamp}.json"
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False, indent=2)
-    print(f"[저장 완료] JSON → {json_path}")
-
-
 def save_as_excel(results: dict, out_dir: Path, timestamp: str):
     wb = Workbook()
 
     # 시트1: 조항 분석
     ws1 = wb.active
     ws1.title = "조항 분석"
-    ws1.append(["Clause", "Numbers", "Dates", "Risk Score", "Risk Keywords"])
+    ws1.append(["Clause", "Numbers", "Dates"])
     for c in results.get("clauses", []):
         ws1.append([
             c["clause"],
             ", ".join(c["entities"]["numbers"]),
             ", ".join(c["entities"]["dates"]),
-            c["risk"]["score"],
-            ", ".join(c["risk"]["matched_keywords"]),
         ])
 
-    # 시트2: 임베딩 매칭
-    ws2 = wb.create_sheet("임베딩 매칭")
-    ws2.append(["Clause", "Matched Text", "Similarity"])
+    d2_font = Font(name="D2Coding", size=10)
+    for row in ws1.iter_rows(min_row=1, max_row=ws1.max_row, min_col=1, max_col=5):
+        for cell in row:
+            cell.font = d2_font
+
+    # 시트2: 안전도 평가
+    ws2 = wb.create_sheet("안전도 평가")
+    ws2.append(["Clause", "GoodSim", "BadSim", "FinalScore", "Grade"])
+
     for m in results.get("embedding_match", []):
-        clause_text = m["clause"]
-        for match in m["matches"]:
-            ws2.append([
-                clause_text,
-                match["text"],
-                match["similarity"],
-            ])
+        ws2.append([
+            m["clause"],
+            m["good_sim"],
+            m["bad_sim"],
+            m["final_score"],
+            m["grade_text"]
+        ])
+
+    # 색상 매핑
+    fill_map = {
+        "안전": PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid"),
+        "경고": PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid"),
+        "위험": PatternFill(start_color="F8CBAD", end_color="F8CBAD", fill_type="solid"),
+    }
+
+    for row in ws2.iter_rows(min_row=2, max_row=ws2.max_row, min_col=1, max_col=6):
+        for cell in row:
+            cell.font = d2_font
+        grade_value = row[4].value
+        if grade_value in fill_map:
+            row[4].fill = fill_map[grade_value]
 
     excel_path = out_dir / f"analysis_result_{timestamp}.xlsx"
     wb.save(excel_path)
@@ -115,142 +127,119 @@ def save_as_excel(results: dict, out_dir: Path, timestamp: str):
 def save_as_pdf(results: dict, out_dir: Path, timestamp: str):
     pdf_path = out_dir / f"analysis_result_{timestamp}.pdf"
 
-    # 한글 지원 폰트 등록
-    pdfmetrics.registerFont(UnicodeCIDFont("HYSMyeongJo-Medium"))
+    font_path = Path("./fonts/D2Coding-Ver1.3.2-20180524.ttf")
+    if not font_path.exists():
+        raise FileNotFoundError("⚠️ D2Coding 폰트 파일을 ./fonts 폴더에 넣어주세요.")
 
-    # 기본 스타일
+    pdfmetrics.registerFont(TTFont("D2Coding", str(font_path)))
+
     styles = getSampleStyleSheet()
-    styles["Normal"].fontName = "HYSMyeongJo-Medium"
-    styles["Title"].fontName = "HYSMyeongJo-Medium"
-    styles["Heading2"].fontName = "HYSMyeongJo-Medium"
+    styles["Normal"].fontName = "D2Coding"
+    styles["Title"].fontName = "D2Coding"
+    styles["Heading2"].fontName = "D2Coding"
 
-    # 표 안 전용 스타일
-    from reportlab.lib.styles import ParagraphStyle
     korean_style = ParagraphStyle(
         name="Korean",
-        fontName="HYSMyeongJo-Medium",
+        fontName="D2Coding",
         fontSize=9,
         leading=12
     )
 
-    # PDF 문서 생성
     doc = SimpleDocTemplate(str(pdf_path), pagesize=A4)
     elements = []
 
-    # 제목
     elements.append(Paragraph("분석 리포트", styles["Title"]))
     elements.append(Spacer(1, 20))
 
-    # --- 조항 분석 표 ---
-    elements.append(Paragraph("1. 조항 분석", styles["Heading2"]))
-
-    table_data = [[
-        Paragraph("Clause", korean_style),
-        Paragraph("Risk Score", korean_style),
-        Paragraph("Risk Keywords", korean_style)
-    ]]
-
-    for c in results.get("clauses", []):
-        table_data.append([
-            Paragraph(c["clause"], korean_style),
-            Paragraph(str(c["risk"]["score"]), korean_style),
-            Paragraph(", ".join(c["risk"]["matched_keywords"]), korean_style)
-        ])
-
-    table = Table(table_data, colWidths=[300, 60, 120])
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), colors.grey),
-        ("TEXTCOLOR", (0,0), (-1,0), colors.whitesmoke),
-        ("ALIGN", (0,0), (-1,-1), "LEFT"),
-        ("VALIGN", (0,0), (-1,-1), "TOP"),
-        ("GRID", (0,0), (-1,-1), 0.5, colors.black),
-    ]))
-    elements.append(table)
-    elements.append(Spacer(1, 20))
-
-    # --- 임베딩 매칭 표 ---
-    elements.append(Paragraph("2. 유사 임베딩 매칭", styles["Heading2"]))
-
+    # 안전도 평가
+    elements.append(Paragraph("안전도 평가", styles["Heading2"]))
     match_data = [[
         Paragraph("Clause", korean_style),
-        Paragraph("Matched Text", korean_style),
-        Paragraph("Similarity", korean_style)
+        Paragraph("GoodSim", korean_style),
+        Paragraph("BadSim", korean_style),
+        Paragraph("FinalScore", korean_style),
+        Paragraph("Grade", korean_style)
     ]]
 
     for m in results.get("embedding_match", []):
-        for match in m["matches"]:
-            match_data.append([
-                Paragraph(m["clause"], korean_style),
-                Paragraph(match["text"], korean_style),
-                Paragraph(f"{match['similarity']:.3f}", korean_style)
-            ])
+        match_data.append([
+            Paragraph(m["clause"], korean_style),
+            Paragraph(f"{m['good_sim']:.3f}", korean_style),
+            Paragraph(f"{m['bad_sim']:.3f}", korean_style),
+            Paragraph(f"{m['final_score']:.3f}", korean_style),
+            Paragraph(m["grade_text"], korean_style)
+        ])
 
-    match_table = Table(match_data, colWidths=[300, 120, 80])
-    match_table.setStyle(TableStyle([
+    match_table = Table(match_data, colWidths=[200, 60, 60, 60, 80])
+    table_style = TableStyle([
         ("BACKGROUND", (0,0), (-1,0), colors.grey),
         ("TEXTCOLOR", (0,0), (-1,0), colors.whitesmoke),
-        ("ALIGN", (0,0), (-1,-1), "LEFT"),
-        ("VALIGN", (0,0), (-1,-1), "TOP"),
         ("GRID", (0,0), (-1,-1), 0.5, colors.black),
-    ]))
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+    ])
+
+    # 색상 처리
+    for i, row in enumerate(match_data[1:], start=1):
+        grade = row[4].text
+        if grade == "안전":
+            table_style.add("BACKGROUND", (4, i), (4, i), colors.HexColor("#C6EFCE"))
+        elif grade == "경고":
+            table_style.add("BACKGROUND", (4, i), (4, i), colors.HexColor("#FFF2CC"))
+        elif grade == "위험":
+            table_style.add("BACKGROUND", (4, i), (4, i), colors.HexColor("#F8CBAD"))
+
+    match_table.setStyle(table_style)
     elements.append(match_table)
 
-    # PDF 저장
     doc.build(elements)
     print(f"[저장 완료] PDF → {pdf_path}")
 
 
-
 def main():
-    # .env 로드
     load_dotenv()
     api_url = os.getenv("API_URL")
     secret_key = os.getenv("SECRET_KEY")
-
     if not api_url or not secret_key:
         print("[오류] API_URL 또는 SECRET_KEY가 .env에 없습니다.")
         sys.exit(1)
 
-    # 사용자 입력
     user_path = input("분석할 이미지 폴더 또는 단일 PDF/이미지 파일 경로를 입력하세요: ").strip()
     user_path = user_path.strip('"').strip("'")
-
     image_files = collect_inputs(user_path)
 
-    # 출력 형식 선택
-    output_format = input("저장 형식을 선택하세요 (json / excel / pdf / 모두): ").strip().lower()
+    output_format = input("저장 형식을 선택하세요 (excel / pdf / 모두): ").strip().lower()
 
-    risk_keywords = ["위약금", "손해배상", "강제", "의무"]
-    example_db = ["예시 조항1", "예시 조항2"]
+    # ✅ CSV 로드 (좋은 예시 + 나쁜 예시)
+    df = pd.read_csv("D:/25-2ocr2/DB/lease_similarity_pair_db.csv", encoding="utf-8")
+    good_examples = df["GoodExample"].dropna().tolist()
+    bad_examples = df["BadExample"].dropna().tolist()
 
-    results = process_documents(image_files, api_url, secret_key, risk_keywords, example_db)
+    results = process_documents(
+        image_files, api_url, secret_key,
+        good_examples, bad_examples
+    )
 
-    # 콘솔 출력
     print("=== 최종 분석 결과 ===")
     for r in results["clauses"]:
         print(r)
 
-    print("\n=== 유사 임베딩 매칭 결과 ===")
+    print("\n=== 종합 안전도 평가 ===")
     for m in results["embedding_match"]:
         print(m)
 
-    # 결과 저장 디렉토리 (고정)
     out_dir = Path("D:/25-2ocr2/output")
     out_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    if output_format == "json":
-        save_as_json(results, out_dir, timestamp)
-    elif output_format == "excel":
+    if output_format == "excel":
         save_as_excel(results, out_dir, timestamp)
     elif output_format == "pdf":
         save_as_pdf(results, out_dir, timestamp)
     elif output_format == "모두":
-        save_as_json(results, out_dir, timestamp)
         save_as_excel(results, out_dir, timestamp)
         save_as_pdf(results, out_dir, timestamp)
     else:
-        print("[안내] 알 수 없는 형식입니다. 아무 것도 저장하지 않았습니다.")
+        print("[안내] 알 수 없는 형식입니다.")
 
 
 if __name__ == "__main__":
