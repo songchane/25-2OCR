@@ -209,14 +209,21 @@ def main():
 
     output_format = input("저장 형식을 선택하세요 (excel / pdf / 모두): ").strip().lower()
 
-    # ✅ CSV 로드 (좋은 예시 + 나쁜 예시)
-    df = pd.read_csv("D:/25-2ocr2/DB/lease_similarity_pair_db.csv", encoding="utf-8")
+        # ✅ CSV 로드 (좋은 예시 + 나쁜 예시 + 위험 키워드)
+    df = pd.read_csv("D:/25-2ocr2/DB/lease_similarity_pair_db_bad_updated.csv", encoding="utf-8")
     good_examples = df["GoodExample"].dropna().tolist()
     bad_examples = df["BadExample"].dropna().tolist()
+    risk_keywords = df["RiskKeywords"].dropna().tolist() 
+
+    # RiskKeywords 컬럼에서 키워드 추출 (쉼표 구분 처리)
+    risk_keywords = []
+    if "RiskKeywords" in df.columns:
+        for kws in df["RiskKeywords"].dropna():
+            risk_keywords.extend(str(kws).split(","))
 
     results = process_documents(
         image_files, api_url, secret_key,
-        good_examples, bad_examples
+        good_examples, bad_examples, risk_keywords
     )
 
     print("=== 최종 분석 결과 ===")
